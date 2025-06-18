@@ -1,4 +1,4 @@
-name: 'Spawn'
+name: 'saward/spawn'
 description: 'Download the Spawn SQL-migration CLI and add it to PATH'
 
 inputs:
