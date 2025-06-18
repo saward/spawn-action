@@ -3,7 +3,7 @@ description: 'Download the Spawn SQL-migration CLI and add it to PATH'
 
 inputs:
   version:
-    description: 'Tag of the Spawn release to install (use "latest" for newest)'
+    description: 'Release tag to install (use "latest" for newest)'
     default: 'latest'
 
 outputs:
@@ -13,19 +13,19 @@ outputs:
 runs:
   using: 'composite'
   steps:
-
-    # 1️⃣ Resolve the version tag (latest ⇢ real tag_name)
+    # 1️⃣ Resolve the version tag ("latest" → real tag_name)
     - name: Determine version
       id: resolve
       shell: bash
       run: |
         set -euo pipefail
         if [[ "${{ inputs.version }}" == "latest" ]]; then
-          ver=$(gh api /repos/saward/spawn/releases/latest --jq .tag_name)
+          ver=$(curl -sfL https://api.github.com/repos/saward/spawn/releases/latest \
+                | jq -r .tag_name)
         else
           ver="${{ inputs.version }}"
         fi
-        echo "version=$ver"           >> "$GITHUB_OUTPUT"
+        echo "version=$ver" >> "$GITHUB_OUTPUT"
         echo "Spawn version → $ver"
 
     # 2️⃣ Map the runner platform to the correct asset suffix
@@ -45,15 +45,17 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        asset="spawn-${{ steps.resolve.outputs.version }}-${{ steps.target.outputs.target }}.tar.gz"
-        gh release download "$asset" \
-          --repo saward/spawn \
-          --pattern "$asset"
+        ver=${{ steps.resolve.outputs.version }}
+        tgt=${{ steps.target.outputs.target }}
+        asset="spawn-${ver}-${tgt}.tar.gz"
+        url="https://github.com/saward/spawn/releases/download/${ver}/${asset}"
+        echo "Fetching $url"
+        curl -sLf -o "$asset" "$url"
         tar -xzf "$asset"
-        chmod +x spawn        # ensure it’s executable
-        echo "$PWD" >> "$GITHUB_PATH"   # make it available to later steps
+        chmod +x spawn
+        echo "$PWD" >> "$GITHUB_PATH"   # add to PATH
 
-    # 4️⃣ Echo the installed version for logs and output
+    # 4️⃣ Log installed version
     - name: Done
       shell: bash
-      run: echo "Spawn ${{ steps.resolve.outputs.version }} installed and on PATH"
+      run: echo "::notice title=Spawn::Installed version ${{ steps.resolve.outputs.version }}"
