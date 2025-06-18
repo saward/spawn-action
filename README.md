@@ -9,6 +9,6 @@ steps:
   - uses: actions/checkout@v4
 
   # Install Spawn (latest release)
-  - name: saward/spawn
+  - name: Install Spawn
     uses: saward/spawn-action@v1
 ```
