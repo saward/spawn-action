@@ -1,0 +1,59 @@
+name: 'Spawn'
+description: 'Download the Spawn SQL-migration CLI and add it to PATH'
+
+inputs:
+  version:
+    description: 'Tag of the Spawn release to install (use "latest" for newest)'
+    default: 'latest'
+
+outputs:
+  version:
+    description: 'The Spawn version that was installed'
+
+runs:
+  using: 'composite'
+  steps:
+
+    # 1️⃣ Resolve the version tag (latest ⇢ real tag_name)
+    - name: Determine version
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${{ inputs.version }}" == "latest" ]]; then
+          ver=$(gh api /repos/saward/spawn/releases/latest --jq .tag_name)
+        else
+          ver="${{ inputs.version }}"
+        fi
+        echo "version=$ver"           >> "$GITHUB_OUTPUT"
+        echo "Spawn version → $ver"
+
+    # 2️⃣ Map the runner platform to the correct asset suffix
+    - name: Select asset target
+      id: target
+      shell: bash
+      run: |
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)   tgt="x86_64-unknown-linux-musl"  ;;
+          Linux-ARM64) tgt="aarch64-unknown-linux-musl" ;;
+          *) echo "Unsupported platform: ${{ runner.os }} ${{ runner.arch }}"; exit 1 ;;
+        esac
+        echo "target=$tgt" >> "$GITHUB_OUTPUT"
+
+    # 3️⃣ Download and extract the tarball
+    - name: Download Spawn ${{ steps.resolve.outputs.version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        asset="spawn-${{ steps.resolve.outputs.version }}-${{ steps.target.outputs.target }}.tar.gz"
+        gh release download "$asset" \
+          --repo saward/spawn \
+          --pattern "$asset"
+        tar -xzf "$asset"
+        chmod +x spawn        # ensure it’s executable
+        echo "$PWD" >> "$GITHUB_PATH"   # make it available to later steps
+
+    # 4️⃣ Echo the installed version for logs and output
+    - name: Done
+      shell: bash
+      run: echo "Spawn ${{ steps.resolve.outputs.version }} installed and on PATH"
