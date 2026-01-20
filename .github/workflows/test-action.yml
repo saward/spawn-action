@@ -47,8 +47,7 @@ jobs:
       - name: Run Action (v0.1.0)
         uses: ./
         with:
-          # REPLACE 'v0.1.0' with a real tag that actually exists in saward/spawn
-          version: 'v0.1.0' 
+          version: 'v0.1.5' 
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify
@@ -65,7 +64,7 @@ jobs:
         uses: ./
         with:
           # If your repo uses 'v0.1.0', passing '0.1.0' tests your bash script's ability to fix it
-          version: '0.1.0' 
+          version: '0.1.5' 
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify
