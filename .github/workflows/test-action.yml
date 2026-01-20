@@ -1,0 +1,72 @@
+name: Test Action Logic
+
+on:
+  push:
+    branches: [main]
+    paths: ['action.yml', '.github/workflows/test-action.yml']
+  pull_request:
+    branches: [main]
+    paths: ['action.yml', '.github/workflows/test-action.yml']
+  workflow_dispatch:
+
+jobs:
+  # Test 1: Defaults (Get Latest)
+  test-latest:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    name: "Latest (${{ matrix.os }})"
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Action (Local Path)
+        id: spawn
+        # 'uses: ./' tells GitHub to load action.yml from the current repo root
+        uses: ./ 
+        with:
+          # Optional: provide a token to avoid rate limits during testing
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Installation
+        run: |
+          echo "Verifying Spawn installation..."
+          which spawn
+          spawn --version
+
+          echo "Output Version: ${{ steps.spawn.outputs.version }}"
+
+  # Test 2: Specific Version (Pinning)
+  test-specific:
+    runs-on: ubuntu-latest
+    name: "Pinned Version"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Action (v0.1.0)
+        uses: ./
+        with:
+          # REPLACE 'v0.1.0' with a real tag that actually exists in saward/spawn
+          version: 'v0.1.0' 
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify
+        run: spawn --version
+
+  # Test 3: Normalization (Input '0.1.0' -> Target 'v0.1.0')
+  test-normalization:
+    runs-on: ubuntu-latest
+    name: "Tag Normalization"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Action (Missing 'v')
+        uses: ./
+        with:
+          # If your repo uses 'v0.1.0', passing '0.1.0' tests your bash script's ability to fix it
+          version: '0.1.0' 
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify
+        run: spawn --version
