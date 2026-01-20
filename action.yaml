@@ -5,57 +5,145 @@ inputs:
   version:
     description: 'Release tag to install (use "latest" for newest)'
     default: 'latest'
+  github_token:
+    description: 'Token for API authentication (optional)'
+    required: false
 
 outputs:
   version:
     description: 'The Spawn version that was installed'
+    value: ${{ steps.resolve.outputs.version }}
 
 runs:
   using: 'composite'
   steps:
-    # 1️⃣ Resolve the version tag ("latest" → real tag_name)
+    # 1️⃣ Resolve version (Global gh check + Tag Normalization)
     - name: Determine version
       id: resolve
       shell: bash
+      env:
+        INPUT_VER: ${{ inputs.version }}
+        INPUT_TOKEN: ${{ inputs.github_token }}
       run: |
         set -euo pipefail
-        if [[ "${{ inputs.version }}" == "latest" ]]; then
-          ver=$(curl -sfL https://api.github.com/repos/saward/spawn/releases/latest \
-                | jq -r .tag_name)
-        else
-          ver="${{ inputs.version }}"
-        fi
-        echo "version=$ver" >> "$GITHUB_OUTPUT"
-        echo "Spawn version → $ver"
 
-    # 2️⃣ Map the runner platform to the correct asset suffix
+        # --- 1. Token Setup ---
+        # Fallback logic in bash to handle empty inputs vs missing context
+        GH_TOKEN="${INPUT_TOKEN:-${GITHUB_TOKEN:-}}"
+        export GH_TOKEN
+
+        if [[ -z "$GH_TOKEN" ]]; then
+           echo "::warning::No GitHub Token provided. API rate limits may apply."
+        fi
+
+        # --- 2. Dependency Check ---
+        # We require 'gh' for reliable tag resolution. Fail fast if missing.
+        if ! command -v gh &> /dev/null; then
+           echo "::error::The 'gh' CLI is required for this action but was not found."
+           exit 1
+        fi
+
+        # --- 3. Resolution Logic ---
+        if [[ "$INPUT_VER" == "latest" ]]; then
+          echo "Resolving 'latest' via GitHub API..."
+          ver=$(gh release view --repo saward/spawn --json tagName --jq .tagName)
+        else
+          # Check if the exact tag exists
+          if gh release view --repo saward/spawn "$INPUT_VER" &>/dev/null; then
+             ver="$INPUT_VER"
+          # Check if adding 'v' helps (e.g. input '0.5.0' -> found 'v0.5.0')
+          elif gh release view --repo saward/spawn "v$INPUT_VER" &>/dev/null; then
+             ver="v$INPUT_VER"
+          else
+             echo "::error::Release '$INPUT_VER' (or 'v$INPUT_VER') not found in saward/spawn"
+             exit 1
+          fi
+        fi
+        
+        echo "version=$ver" >> "$GITHUB_OUTPUT"
+        echo "Selected version: $ver"
+
+    # 2️⃣ Map Platform
     - name: Select asset target
       id: target
       shell: bash
       run: |
-        case "${{ runner.os }}-${{ runner.arch }}" in
-          Linux-X64)   tgt="x86_64-unknown-linux-musl"  ;;
-          Linux-ARM64) tgt="aarch64-unknown-linux-musl" ;;
-          *) echo "Unsupported platform: ${{ runner.os }} ${{ runner.arch }}"; exit 1 ;;
+        set -euo pipefail
+        OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+        ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+        
+        case "$OS-$ARCH" in
+          linux-x64)   tgt="x86_64-unknown-linux-musl"  ;;
+          linux-arm64) tgt="aarch64-unknown-linux-musl" ;;
+          macos-x64)   tgt="x86_64-apple-darwin" ;; 
+          macos-arm64) tgt="aarch64-apple-darwin" ;;
+          *) 
+            echo "::error::Unsupported platform: $OS $ARCH"
+            exit 1 
+            ;;
         esac
         echo "target=$tgt" >> "$GITHUB_OUTPUT"
 
-    # 3️⃣ Download and extract the tarball
-    - name: Download Spawn ${{ steps.resolve.outputs.version }}
+    # 3️⃣ Download, Extract, and Install
+    - name: Install Spawn
+      shell: bash
+      env:
+        VER: ${{ steps.resolve.outputs.version }}
+        TGT: ${{ steps.target.outputs.target }}
+      run: |
+        set -euo pipefail
+        
+        # 1. Setup clean directories
+        # Use a specific download folder to separate extraction mess from final binary
+        DOWNLOAD_DIR="$RUNNER_TEMP/spawn-dl"
+        BIN_DIR="$RUNNER_TEMP/spawn-bin"
+        mkdir -p "$DOWNLOAD_DIR" "$BIN_DIR"
+        
+        # 2. Download
+        ASSET="spawn-${VER}-${TGT}.tar.gz"
+        URL="https://github.com/saward/spawn/releases/download/${VER}/${ASSET}"
+        echo "Downloading $URL..."
+        curl -sSfL -o "$DOWNLOAD_DIR/spawn.tar.gz" "$URL"
+        
+        # 3. Extract
+        echo "Extracting..."
+        tar -xzf "$DOWNLOAD_DIR/spawn.tar.gz" -C "$DOWNLOAD_DIR"
+        
+        # 4. Find the binary (Robust Heuristic)
+        # First, look for a file named 'spawn' that has execute permissions
+        FOUND_BIN=$(find "$DOWNLOAD_DIR" -type f -name "spawn" -perm -111 | head -n 1 || true)
+        
+        # Fallback: Look for any file named 'spawn' (in case perms were lost in zip)
+        if [[ -z "$FOUND_BIN" ]]; then
+          FOUND_BIN=$(find "$DOWNLOAD_DIR" -type f -name "spawn" | head -n 1 || true)
+        fi
+
+        if [[ -z "$FOUND_BIN" ]]; then
+          echo "::error::Could not find 'spawn' binary in extracted archive"
+          echo "::group::Archive Contents (Debug)"
+          find "$DOWNLOAD_DIR" -maxdepth 3
+          echo "::endgroup::"
+          exit 1
+        fi
+
+        # 5. Copy to stable directory (cp is safer than mv across potential mounts)
+        echo "Installing $FOUND_BIN to $BIN_DIR/spawn"
+        cp "$FOUND_BIN" "$BIN_DIR/spawn"
+        chmod +x "$BIN_DIR/spawn"
+        
+        # 6. Add deterministic path to GITHUB_PATH
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+
+    # 4️⃣ Verify
+    - name: Verify Installation
       shell: bash
       run: |
         set -euo pipefail
-        ver=${{ steps.resolve.outputs.version }}
-        tgt=${{ steps.target.outputs.target }}
-        asset="spawn-${ver}-${tgt}.tar.gz"
-        url="https://github.com/saward/spawn/releases/download/${ver}/${asset}"
-        echo "Fetching $url"
-        curl -sLf -o "$asset" "$url"
-        tar -xzf "$asset"
-        chmod +x spawn
-        echo "$PWD" >> "$GITHUB_PATH"   # add to PATH
-
-    # 4️⃣ Log installed version
-    - name: Done
-      shell: bash
-      run: echo "::notice title=Spawn::Installed version ${{ steps.resolve.outputs.version }}"
+        # Ensure it's on the path and runnable
+        if ! command -v spawn &> /dev/null; then
+           echo "::error::Spawn command not found on PATH"
+           exit 1
+        fi
+        
+        INSTALLED_VER=$(spawn --version)
+        echo "::notice title=Spawn::Installed version $INSTALLED_VER"
