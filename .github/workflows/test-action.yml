@@ -3,10 +3,10 @@ name: Test Action Logic
 on:
   push:
     branches: [main]
-    paths: ['action.yml', '.github/workflows/test-action.yml']
+    paths: ["action.yml", ".github/workflows/test-action.yml"]
   pull_request:
     branches: [main]
-    paths: ['action.yml', '.github/workflows/test-action.yml']
+    paths: ["action.yml", ".github/workflows/test-action.yml"]
   workflow_dispatch:
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
       - name: Run Action (Local Path)
         id: spawn
         # 'uses: ./' tells GitHub to load action.yml from the current repo root
-        uses: ./ 
+        uses: ./
         with:
           # Optional: provide a token to avoid rate limits during testing
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -44,10 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Action (v0.1.0)
+      - name: Run Action (v0.1.8)
         uses: ./
         with:
-          version: 'v0.1.5' 
+          version: "v0.1.8"
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify
@@ -64,7 +64,7 @@ jobs:
         uses: ./
         with:
           # If your repo uses 'v0.1.0', passing '0.1.0' tests your bash script's ability to fix it
-          version: '0.1.5' 
+          version: "0.1.8"
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify

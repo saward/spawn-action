@@ -1,21 +1,21 @@
-name: 'saward/spawn'
-description: 'Download the Spawn SQL-migration CLI and add it to PATH'
+name: "saward/spawn"
+description: "Download the Spawn SQL-migration CLI and add it to PATH"
 
 inputs:
   version:
     description: 'Release tag to install (use "latest" for newest)'
-    default: 'latest'
+    default: "latest"
   github_token:
-    description: 'Token for API authentication (optional)'
+    description: "Token for API authentication (optional)"
     required: false
 
 outputs:
   version:
-    description: 'The Spawn version that was installed'
+    description: "The Spawn version that was installed"
     value: ${{ steps.resolve.outputs.version }}
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     # 1️⃣ Resolve version (Global gh check + Tag Normalization)
     - name: Determine version
@@ -59,7 +59,7 @@ runs:
              exit 1
           fi
         fi
-        
+
         echo "version=$ver" >> "$GITHUB_OUTPUT"
         echo "Selected version: $ver"
 
@@ -71,15 +71,26 @@ runs:
         set -euo pipefail
         OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
         ARCH=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
-        
+
+        VER="${{ steps.resolve.outputs.version }}"
+        # Strip leading 'v' for version comparison
+        VER_NUM="${VER#v}"
+
+        # Check if version >= 0.1.7 (cargo-dist uses gnu instead of musl)
+        if printf '%s\n%s\n' "0.1.7" "$VER_NUM" | sort -V | head -n1 | grep -q "^0\.1\.7$"; then
+          LINUX_LIBC="gnu"
+        else
+          LINUX_LIBC="musl"
+        fi
+
         case "$OS-$ARCH" in
-          linux-x64)   tgt="x86_64-unknown-linux-musl"  ;;
-          linux-arm64) tgt="aarch64-unknown-linux-musl" ;;
-          macos-x64)   tgt="x86_64-apple-darwin" ;; 
+          linux-x64)   tgt="x86_64-unknown-linux-${LINUX_LIBC}"  ;;
+          linux-arm64) tgt="aarch64-unknown-linux-${LINUX_LIBC}" ;;
+          macos-x64)   tgt="x86_64-apple-darwin" ;;
           macos-arm64) tgt="aarch64-apple-darwin" ;;
-          *) 
+          *)
             echo "::error::Unsupported platform: $OS $ARCH"
-            exit 1 
+            exit 1
             ;;
         esac
         echo "target=$tgt" >> "$GITHUB_OUTPUT"
@@ -92,27 +103,35 @@ runs:
         TGT: ${{ steps.target.outputs.target }}
       run: |
         set -euo pipefail
-        
+
         # 1. Setup clean directories
         # Use a specific download folder to separate extraction mess from final binary
         DOWNLOAD_DIR="$RUNNER_TEMP/spawn-dl"
         BIN_DIR="$RUNNER_TEMP/spawn-bin"
         mkdir -p "$DOWNLOAD_DIR" "$BIN_DIR"
-        
+
         # 2. Download
-        ASSET="spawn-${VER}-${TGT}.tar.gz"
+        # cargo-dist (>= 0.1.7) uses spawn-db-{TGT}.tar.xz, older uses spawn-{VER}-{TGT}.tar.gz
+        VER_NUM="${VER#v}"
+        if printf '%s\n%s\n' "0.1.7" "$VER_NUM" | sort -V | head -n1 | grep -q "^0\.1\.7$"; then
+          ASSET="spawn-db-${TGT}.tar.xz"
+          ARCHIVE="spawn.tar.xz"
+        else
+          ASSET="spawn-${VER}-${TGT}.tar.gz"
+          ARCHIVE="spawn.tar.gz"
+        fi
         URL="https://github.com/saward/spawn/releases/download/${VER}/${ASSET}"
         echo "Downloading $URL..."
-        curl -sSfL -o "$DOWNLOAD_DIR/spawn.tar.gz" "$URL"
-        
+        curl -sSfL -o "$DOWNLOAD_DIR/$ARCHIVE" "$URL"
+
         # 3. Extract
         echo "Extracting..."
-        tar -xzf "$DOWNLOAD_DIR/spawn.tar.gz" -C "$DOWNLOAD_DIR"
-        
+        tar -xf "$DOWNLOAD_DIR/$ARCHIVE" -C "$DOWNLOAD_DIR"
+
         # 4. Find the binary (Robust Heuristic)
         # First, look for a file named 'spawn' that has execute permissions
         FOUND_BIN=$(find "$DOWNLOAD_DIR" -type f -name "spawn" -perm -111 | head -n 1 || true)
-        
+
         # Fallback: Look for any file named 'spawn' (in case perms were lost in zip)
         if [[ -z "$FOUND_BIN" ]]; then
           FOUND_BIN=$(find "$DOWNLOAD_DIR" -type f -name "spawn" | head -n 1 || true)
@@ -130,7 +149,7 @@ runs:
         echo "Installing $FOUND_BIN to $BIN_DIR/spawn"
         cp "$FOUND_BIN" "$BIN_DIR/spawn"
         chmod +x "$BIN_DIR/spawn"
-        
+
         # 6. Add deterministic path to GITHUB_PATH
         echo "$BIN_DIR" >> "$GITHUB_PATH"
 
@@ -144,6 +163,6 @@ runs:
            echo "::error::Spawn command not found on PATH"
            exit 1
         fi
-        
+
         INSTALLED_VER=$(spawn --version)
         echo "::notice title=Spawn::Installed version $INSTALLED_VER"
